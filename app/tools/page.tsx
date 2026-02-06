@@ -1,0 +1,117 @@
+"use client";
+
+import Link from "next/link";
+
+import { useUiPrefs } from "../_lib/uiPrefs";
+
+type Tool = {
+  href: string;
+  titleEn: string;
+  titleKo: string;
+  descEn: string;
+  descKo: string;
+};
+
+const tools: Tool[] = [
+  {
+    href: "/tools/subdomain-scan",
+    titleEn: "Subdomain Scan",
+    titleKo: "서브도메인 스캔",
+    descEn: "Run subfinder+httpx and generate subdomains.txt.",
+    descKo: "subfinder+httpx로 서브도메인을 수집합니다.",
+  },
+  {
+    href: "/tools/port-scan",
+    titleEn: "Port Scan",
+    titleKo: "포트 스캔",
+    descEn: "Scan common ports for a host.",
+    descKo: "호스트의 주요 포트를 스캔합니다.",
+  },
+  {
+    href: "/tools/major-dir-file",
+    titleEn: "Major Dir/File",
+    titleKo: "주요 경로 탐색",
+    descEn: "Check well-known admin/config paths.",
+    descKo: "주요 디렉터리/파일 경로를 확인합니다.",
+  },
+  {
+    href: "/tools/important-search",
+    titleEn: "Important Search",
+    titleKo: "중요 정보 탐지",
+    descEn: "Find exposed secrets, headers, and JS patterns.",
+    descKo: "노출된 키/토큰/헤더/JS 패턴을 탐지합니다.",
+  },
+  {
+    href: "/tools/cookie-scan",
+    titleEn: "Cookie & MFA",
+    titleKo: "쿠키 & MFA",
+    descEn: "Extract cookies and estimate MFA presence.",
+    descKo: "쿠키 정보를 추출하고 MFA 여부를 추정합니다.",
+  },
+  {
+    href: "/tools/sitemap-builder",
+    titleEn: "Sitemap Builder",
+    titleKo: "사이트맵 빌더",
+    descEn: "Crawl links and save sitemap tree output.",
+    descKo: "링크를 크롤링해 사이트맵 트리를 생성합니다.",
+  },
+];
+
+export default function ToolsIndexPage() {
+  const { lang, t } = useUiPrefs();
+
+  return (
+    <main>
+      <header>
+        <div className="title-block">
+          <h1>{lang === "ko" ? "기능별 도구" : "Tools"}</h1>
+          <p>
+            {lang === "ko"
+              ? "VulnCheckList의 각 기능을 개별로 실행하고 결과를 확인합니다."
+              : "Run each VulnCheckList module individually and review results."}
+          </p>
+        </div>
+        <div className="status-pill">
+          {lang === "ko" ? "모듈" : "Modules"}: {tools.length}
+        </div>
+      </header>
+
+      <section className="grid">
+        <div className="card">
+          <h2>{lang === "ko" ? "도구 목록" : "Tool List"}</h2>
+          <div className="panel-stack">
+            {tools.map((tool) => (
+              <Link key={tool.href} href={tool.href} className="nav-card">
+                <div className="nav-card-title">
+                  {lang === "ko" ? tool.titleKo : tool.titleEn}
+                </div>
+                <div className="muted">
+                  {lang === "ko" ? tool.descKo : tool.descEn}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>{lang === "ko" ? "안내" : "Notes"}</h2>
+          <p className="muted">
+            {lang === "ko"
+              ? "서브도메인 스캔은 subfinder/httpx 설치가 필요합니다. 각 모듈은 VulnCheckList 폴더를 기준으로 실행됩니다."
+              : "Subdomain scan requires subfinder/httpx installed. Each module runs relative to the VulnCheckList directory."}
+          </p>
+          <p className="muted">
+            {lang === "ko"
+              ? "모듈 출력은 표준 출력/파일(data/)에 생성되는 내용을 기반으로 표시됩니다."
+              : "Outputs are shown from stdout and artifacts generated under data/."}
+          </p>
+          <p className="muted">
+            {lang === "ko"
+              ? "언어/테마 설정은 우측 상단/우측 하단 고정 버튼으로 변경됩니다."
+              : "Language/theme follow the fixed buttons (top-right / bottom-right)."}
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}
