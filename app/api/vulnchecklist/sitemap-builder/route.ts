@@ -3,7 +3,15 @@ import path from "path";
 import fs from "fs/promises";
 import { existsSync } from "fs";
 
-import { isValidTarget, readText, runCommand, vulnRoot } from "../_shared";
+import {
+  copyArtifact,
+  createHistoryRecord,
+  finalizeHistoryRecord,
+  writeArtifactText,
+} from "../../_shared/history";
+import { getUserIdFromRequest } from "../../_shared/user";
+
+import { isValidTarget, pythonBin, readText, runCommand, vulnRoot } from "../_shared";
 
 export const runtime = "nodejs";
 
@@ -13,6 +21,9 @@ type Body = {
 };
 
 export async function POST(request: Request) {
+  const userId = getUserIdFromRequest(request) || "guest";
+  let history: { id: string; recordDir: string } | null = null;
+
   try {
     const body = (await request.json()) as Body;
     const startUrl = (body.startUrl || "").trim();
@@ -42,8 +53,17 @@ export async function POST(request: Request) {
     await fs.mkdir(dataDir, { recursive: true });
     const sitemapPath = path.join(dataDir, "sitemap_tree.txt");
 
+    history = await createHistoryRecord({
+      userId,
+      kind: "sitemap-builder",
+      target: startUrl,
+      requestBody: body,
+    });
+
+    await fs.rm(sitemapPath, { force: true });
+
     const cmd = await runCommand(
-      "python3",
+      pythonBin,
       ["information_scrp/sitemap_builder.py", startUrl, String(maxDepth)],
       vulnRoot,
       20 * 60 * 1000
@@ -52,9 +72,37 @@ export async function POST(request: Request) {
     const sitemapTree = await readText(sitemapPath);
     const log = cmd.output || "";
 
-    return NextResponse.json({ log, sitemapTree });
+    await writeArtifactText(history.recordDir, "log.txt", log);
+    await copyArtifact(history.recordDir, sitemapPath, "sitemap_tree.txt");
+
+    const ok = cmd.exitCode === 0;
+    const responseBody = {
+      historyId: history.id,
+      log,
+      sitemapTree,
+      error: ok ? undefined : "Sitemap builder failed. Check log for details.",
+    };
+
+    await finalizeHistoryRecord({
+      recordDir: history.recordDir,
+      status: ok ? "success" : "error",
+      error: responseBody.error,
+      responseBody,
+    });
+
+    return NextResponse.json(responseBody);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
+
+    if (history) {
+      await finalizeHistoryRecord({
+        recordDir: history.recordDir,
+        status: "error",
+        error: message,
+        responseBody: { historyId: history.id, error: message },
+      });
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

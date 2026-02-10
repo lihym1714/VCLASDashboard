@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { existsSync } from "fs";
 
-import { isValidTarget, normalizePath, runCommand, vulnRoot } from "../_shared";
+import {
+  createHistoryRecord,
+  finalizeHistoryRecord,
+  writeArtifactText,
+} from "../../_shared/history";
+import { getUserIdFromRequest } from "../../_shared/user";
+
+import { isValidTarget, normalizePath, pythonBin, runCommand, vulnRoot } from "../_shared";
 
 export const runtime = "nodejs";
 
@@ -21,6 +28,9 @@ type Body = {
 };
 
 export async function POST(request: Request) {
+  const userId = getUserIdFromRequest(request) || "guest";
+  let history: { id: string; recordDir: string } | null = null;
+
   try {
     const body = (await request.json()) as Body;
     const url = (body.url || "").trim();
@@ -39,6 +49,13 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    history = await createHistoryRecord({
+      userId,
+      kind: "important-search",
+      target: url,
+      requestBody: body,
+    });
 
     const args = ["information_scrp/important_search.py", url];
 
@@ -66,10 +83,38 @@ export async function POST(request: Request) {
     if (body.verifySsl === "no-verify") args.push("--no-verify-ssl");
     if (body.disableWarnings) args.push("--disable-warnings");
 
-    const cmd = await runCommand("python3", args, vulnRoot, 20 * 60 * 1000);
-    return NextResponse.json({ log: cmd.output || "" });
+    const cmd = await runCommand(pythonBin, args, vulnRoot, 20 * 60 * 1000);
+
+    const log = cmd.output || "";
+    await writeArtifactText(history.recordDir, "log.txt", log);
+
+    const ok = cmd.exitCode === 0;
+    const responseBody = {
+      historyId: history.id,
+      log,
+      error: ok ? undefined : "Important search failed. Check log for details.",
+    };
+
+    await finalizeHistoryRecord({
+      recordDir: history.recordDir,
+      status: ok ? "success" : "error",
+      error: responseBody.error,
+      responseBody,
+    });
+
+    return NextResponse.json(responseBody);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
+
+    if (history) {
+      await finalizeHistoryRecord({
+        recordDir: history.recordDir,
+        status: "error",
+        error: message,
+        responseBody: { historyId: history.id, error: message },
+      });
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
