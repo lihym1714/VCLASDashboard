@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import { existsSync } from "fs";
+import path from "path";
 import fs from "fs/promises";
 
 export type CommandResult = {
@@ -7,7 +8,13 @@ export type CommandResult = {
   exitCode: number | null;
 };
 
-export const vulnRoot = "/Users/everspin/everspin/보안기술연구실/VulnCheckList";
+export const vulnRoot =
+  (process.env.VULNCHECKLIST_ROOT || "").trim() || "/opt/VulnCheckListDashboard";
+
+const venvPython = path.join(vulnRoot, "venv", "bin", "python");
+export const pythonBin =
+  (process.env.VULNCHECKLIST_PYTHON || "").trim() ||
+  (existsSync(venvPython) ? venvPython : "python3.11");
 
 export const isValidTarget = (value: string) =>
   /^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#-]*$/.test(value);
