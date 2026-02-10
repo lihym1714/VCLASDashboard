@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { AutoSizeTextarea } from "../../_components/AutoSizeTextarea";
 import { useUiPrefs } from "../../_lib/uiPrefs";
 
 type CookieItem = {
@@ -139,11 +140,11 @@ export default function CookieScanPage() {
       <section className="grid" style={{ marginTop: 24 }}>
         <div className="card">
           <h2>{t.log}</h2>
-          <textarea readOnly value={result?.log || ""} placeholder="" />
+          <AutoSizeTextarea readOnly value={result?.log || ""} placeholder="" />
         </div>
         <div className="card">
           <h2>{lang === "ko" ? "원본 JSON" : "Raw JSON"}</h2>
-          <textarea readOnly value={result?.rawJson || ""} placeholder="" />
+          <AutoSizeTextarea readOnly value={result?.rawJson || ""} placeholder="" />
         </div>
       </section>
     </main>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AutoSizeTextarea } from "../../_components/AutoSizeTextarea";
 import { useUiPrefs } from "../../_lib/uiPrefs";
 
 type ApiResponse = {
@@ -85,7 +86,7 @@ export default function PortScanPage() {
 
         <div className="card">
           <h2>{t.output}</h2>
-          <textarea readOnly value={result?.log || ""} placeholder="" />
+          <AutoSizeTextarea readOnly value={result?.log || ""} placeholder="" />
         </div>
       </section>
     </main>

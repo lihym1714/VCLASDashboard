@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AutoSizeTextarea } from "../../_components/AutoSizeTextarea";
 import { useUiPrefs } from "../../_lib/uiPrefs";
 
 type ApiResponse = {
@@ -97,14 +98,14 @@ export default function SitemapBuilderPage() {
 
         <div className="card">
           <h2>{lang === "ko" ? "사이트맵 트리" : "Sitemap Tree"}</h2>
-          <textarea readOnly value={result?.sitemapTree || ""} placeholder="" />
+          <AutoSizeTextarea readOnly value={result?.sitemapTree || ""} placeholder="" />
         </div>
       </section>
 
       <section style={{ marginTop: 24 }}>
         <div className="card">
           <h2>{t.log}</h2>
-          <textarea readOnly value={result?.log || ""} placeholder="" />
+          <AutoSizeTextarea readOnly value={result?.log || ""} placeholder="" />
         </div>
       </section>
     </main>
