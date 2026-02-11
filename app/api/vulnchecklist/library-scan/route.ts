@@ -111,7 +111,11 @@ function normalizeInputUrl(raw: string) {
 }
 
 function isAllowedHost(base: URL, candidate: URL) {
-  return stripWww(base.hostname) === stripWww(candidate.hostname);
+  const baseHost = stripWww(base.hostname);
+  const candidateHost = stripWww(candidate.hostname);
+  if (candidateHost === baseHost) return true;
+  if (!baseHost.includes(".")) return false;
+  return candidateHost.endsWith(`.${baseHost}`);
 }
 
 function normalizeProvidedUrls(rawUrls: string[], base: URL) {
@@ -606,41 +610,46 @@ export async function POST(request: Request) {
     log += `[*] Options: maxPages=${maxPages}, concurrency=${concurrency}, timeoutMs=${requestTimeoutMs}, maxSitemaps=${maxSitemaps}, osv=${checkVulnerabilities}\n`;
 
     const providedUrls = Array.isArray(body.urls) ? body.urls : [];
-    let discoveredPages: string[] = [];
-    let sitemapCount = 0;
-    let usedProvidedUrls = false;
+    const providedPages = providedUrls.length
+      ? normalizeProvidedUrls(providedUrls, baseUrl)
+      : ([] as string[]);
 
     if (providedUrls.length) {
-      usedProvidedUrls = true;
       log += `[*] URL list provided: ${providedUrls.length}\n`;
-      discoveredPages = normalizeProvidedUrls(providedUrls, baseUrl);
-      log += `[*] URL list after filtering: ${discoveredPages.length}\n`;
-    } else {
-      const sitemapUrls = await discoverSitemapUrls(baseUrl, requestTimeoutMs);
-      log += `[*] Sitemap candidates: ${sitemapUrls.length}\n`;
-
-      const loaded = await loadSitemapPages(
-        baseUrl,
-        sitemapUrls,
-        maxSitemaps,
-        requestTimeoutMs
-      );
-      discoveredPages = loaded.pageUrls;
-      sitemapCount = loaded.sitemapCount;
-      log += `[*] Sitemaps fetched: ${sitemapCount}\n`;
-      log += `[*] Pages discovered: ${discoveredPages.length}\n`;
+      log += `[*] URL list after filtering: ${providedPages.length}\n`;
     }
 
-    const pagesToScan = (discoveredPages.length ? discoveredPages : [baseUrl.toString()]).slice(
-      0,
-      maxPages
+    const sitemapUrls = await discoverSitemapUrls(baseUrl, requestTimeoutMs);
+    log += `[*] Sitemap candidates: ${sitemapUrls.length}\n`;
+
+    const loaded = await loadSitemapPages(
+      baseUrl,
+      sitemapUrls,
+      maxSitemaps,
+      requestTimeoutMs
     );
-    if (!discoveredPages.length) {
-      log += usedProvidedUrls
-        ? "[!] No usable page URLs in provided list. Falling back to scanning base URL only.\n"
-        : "[!] No pages discovered via sitemap. Falling back to scanning base URL only.\n";
+    const sitemapPages = loaded.pageUrls;
+    const sitemapCount = loaded.sitemapCount;
+    log += `[*] Sitemaps fetched: ${sitemapCount}\n`;
+    log += `[*] Pages discovered (sitemap): ${sitemapPages.length}\n`;
+
+    const combinedPages: string[] = [];
+    const seenPages = new Set<string>();
+
+    for (const url of [...providedPages, ...sitemapPages]) {
+      if (seenPages.has(url)) continue;
+      seenPages.add(url);
+      combinedPages.push(url);
     }
-    log += `[*] Pages to scan: ${pagesToScan.length}\n`;
+
+    const discoveredPages = combinedPages.length ? combinedPages : [baseUrl.toString()];
+    if (!combinedPages.length) {
+      log += "[!] No pages discovered from provided URLs or sitemap. Falling back to scanning base URL only.\n";
+    }
+
+    const truncated = discoveredPages.length > maxPages;
+    const pagesToScan = discoveredPages.slice(0, maxPages);
+    log += `[*] Pages to scan: ${pagesToScan.length}${truncated ? " (truncated)" : ""}\n`;
 
     const pageErrors: PageError[] = [];
     const libAgg = new Map<
