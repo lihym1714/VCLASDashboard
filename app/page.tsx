@@ -1,8 +1,23 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AutoSizeTextarea } from "./_components/AutoSizeTextarea";
+import {
+  buildDefaultPresetState,
+  loadSitemapDenylistPrefs,
+  normalizeDenylistPatterns,
+  type PresetState,
+  type SitemapScopeEntry,
+  SITEMAP_DENYLIST_PRESETS,
+  saveSitemapDenylistPrefs,
+} from "./_lib/sitemapDenylist";
+import {
+  generatePresetId,
+  loadRunConfigPresets,
+  saveRunConfigPresets,
+  type RunConfigPreset,
+} from "./_lib/runPresets";
 import { useUiPrefs } from "./_lib/uiPrefs";
 
 type VerifySslMode = "default" | "verify" | "no-verify";
@@ -119,6 +134,65 @@ type LibraryScanResponse = {
 const defaultLoginPath = "/api/auth/login";
 const defaultLogoutPath = "/api/auth/logout";
 
+function parseCustomPatterns(value: string): string[] {
+  if (!value.trim()) return [];
+  return value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .map((item) => {
+      if (!item) return "";
+
+      if (item.startsWith("=")) {
+        const rest = item.slice(1).trim();
+        if (!rest) return "";
+        try {
+          const url =
+            rest.toLowerCase().startsWith("http://") ||
+            rest.toLowerCase().startsWith("https://")
+              ? new URL(rest)
+              : new URL(`https://${rest}`);
+          return `=${url.hostname}`;
+        } catch {
+          return `=${rest}`;
+        }
+      }
+
+      if (item.toLowerCase().startsWith("http://") || item.toLowerCase().startsWith("https://")) {
+        try {
+          const url = new URL(item);
+          return `=${url.hostname}`;
+        } catch {
+          return item;
+        }
+      }
+
+      return item;
+    })
+    .filter(Boolean);
+}
+
+function hostnameFromUrlish(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const url =
+      trimmed.toLowerCase().startsWith("http://") ||
+      trimmed.toLowerCase().startsWith("https://")
+        ? new URL(trimmed)
+        : new URL(`https://${trimmed}`);
+    return url.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function generateScopeId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function Home() {
   const { lang } = useUiPrefs();
   const [domain, setDomain] = useState("");
@@ -129,9 +203,119 @@ export default function Home() {
   const [logoutPath, setLogoutPath] = useState(defaultLogoutPath);
   const [verifySsl, setVerifySsl] = useState<VerifySslMode>("default");
   const [disableWarnings, setDisableWarnings] = useState(false);
+
+  const [sitemapScopeEnabled, setSitemapScopeEnabled] = useState(true);
+  const [sitemapScopeAutoAllowSubdomains, setSitemapScopeAutoAllowSubdomains] =
+    useState(true);
+  const [sitemapScopes, setSitemapScopes] = useState<SitemapScopeEntry[]>([]);
+  const [sitemapScopeDraftValue, setSitemapScopeDraftValue] = useState("");
+  const [sitemapScopeDraftAllowSubdomains, setSitemapScopeDraftAllowSubdomains] =
+    useState(true);
+
+  const [sitemapDenylistEnabled, setSitemapDenylistEnabled] = useState(true);
+  const [sitemapPresetEnabled, setSitemapPresetEnabled] = useState<PresetState>(() =>
+    buildDefaultPresetState()
+  );
+  const [sitemapRememberCustom, setSitemapRememberCustom] = useState(false);
+  const [sitemapCustomDenylist, setSitemapCustomDenylist] = useState("");
   const [status, setStatus] = useState<"idle" | "running" | "success" | "error">("idle");
   const [response, setResponse] = useState<RunResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [presets, setPresets] = useState<RunConfigPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [presetIncludePassword, setPresetIncludePassword] = useState(false);
+  const [presetMessage, setPresetMessage] = useState<string | null>(null);
+
+  const [sitemapPrefsReady, setSitemapPrefsReady] = useState(false);
+
+  useEffect(() => {
+    const prefs = loadSitemapDenylistPrefs();
+    setSitemapDenylistEnabled(prefs.enabled);
+    setSitemapPresetEnabled(prefs.presets);
+    setSitemapScopeEnabled(prefs.scopeEnabled);
+    setSitemapScopeAutoAllowSubdomains(prefs.scopeAutoAllowSubdomains);
+    setSitemapScopes(prefs.scopes);
+    setSitemapRememberCustom(prefs.rememberCustom);
+    setSitemapCustomDenylist(prefs.custom);
+    setSitemapPrefsReady(true);
+  }, []);
+
+  useEffect(() => {
+    setPresets(loadRunConfigPresets());
+  }, []);
+
+  useEffect(() => {
+    if (!sitemapPrefsReady) return;
+    saveSitemapDenylistPrefs({
+      enabled: sitemapDenylistEnabled,
+      presets: sitemapPresetEnabled,
+      scopeEnabled: sitemapScopeEnabled,
+      scopeAutoAllowSubdomains: sitemapScopeAutoAllowSubdomains,
+      scopes: sitemapScopes,
+      rememberCustom: sitemapRememberCustom,
+      custom: sitemapCustomDenylist,
+    });
+  }, [
+    sitemapCustomDenylist,
+    sitemapDenylistEnabled,
+    sitemapPrefsReady,
+    sitemapPresetEnabled,
+    sitemapScopeAutoAllowSubdomains,
+    sitemapScopeEnabled,
+    sitemapScopes,
+    sitemapRememberCustom,
+  ]);
+
+  const sitemapDenylist = useMemo(() => {
+    if (!sitemapDenylistEnabled) return [] as string[];
+
+    const patterns: string[] = [];
+    for (const group of SITEMAP_DENYLIST_PRESETS) {
+      for (const item of group.items) {
+        if (!sitemapPresetEnabled[item.id]) continue;
+        patterns.push(...item.patterns);
+      }
+    }
+    patterns.push(...parseCustomPatterns(sitemapCustomDenylist));
+    return normalizeDenylistPatterns(patterns);
+  }, [sitemapCustomDenylist, sitemapDenylistEnabled, sitemapPresetEnabled]);
+
+  const sitemapScopeParams = useMemo(() => {
+    if (!sitemapScopeEnabled) {
+      return { scopeExact: [] as string[], scopeDomains: [] as string[] };
+    }
+
+    const exact: string[] = [];
+    const domains: string[] = [];
+
+    for (const entry of sitemapScopes) {
+      if (!entry.enabled) continue;
+      const host = hostnameFromUrlish(entry.value);
+      if (!host) continue;
+      if (entry.allowSubdomains) {
+        domains.push(host);
+      } else {
+        exact.push(host);
+      }
+    }
+
+    if (!exact.length && !domains.length) {
+      const host = hostnameFromUrlish(domain);
+      if (host) {
+        if (sitemapScopeAutoAllowSubdomains) {
+          domains.push(host);
+        } else {
+          exact.push(host);
+        }
+      }
+    }
+
+    return {
+      scopeExact: Array.from(new Set(exact)),
+      scopeDomains: Array.from(new Set(domains)),
+    };
+  }, [domain, sitemapScopeAutoAllowSubdomains, sitemapScopeEnabled, sitemapScopes]);
 
   const t = useMemo(() => {
     const dict: Record<"ko" | "en", Record<string, string>> = {
@@ -189,6 +373,20 @@ export default function Home() {
         libraryScanErrors: "Page errors:",
         libraryScanRaw: "Raw JSON",
         libraryScanLog: "Library scan log",
+
+        presetsTitle: "Presets",
+        presetsSaveTitle: "Save current configuration",
+        presetsNameLabel: "Preset name",
+        presetsIncludePassword: "Include login password (stores in browser)",
+        presetsSave: "Save preset",
+        presetsSaved: "Preset saved.",
+        presetsLoaded: "Preset loaded.",
+        presetsDeleted: "Preset deleted.",
+        presetsListTitle: "Saved presets",
+        presetsLoad: "Load",
+        presetsDelete: "Delete",
+        presetsNone: "No presets saved.",
+        presetsInvalidName: "Preset name is required.",
       },
       ko: {
         title: "VulnCheckList 대시보드",
@@ -244,11 +442,102 @@ export default function Home() {
         libraryScanErrors: "페이지 에러:",
         libraryScanRaw: "원본 JSON",
         libraryScanLog: "라이브러리 스캔 로그",
+
+        presetsTitle: "프리셋",
+        presetsSaveTitle: "현재 설정 저장",
+        presetsNameLabel: "프리셋 이름",
+        presetsIncludePassword: "로그인 비밀번호 포함(브라우저에 저장)",
+        presetsSave: "프리셋 저장",
+        presetsSaved: "프리셋이 저장되었습니다.",
+        presetsLoaded: "프리셋을 불러왔습니다.",
+        presetsDeleted: "프리셋을 삭제했습니다.",
+        presetsListTitle: "저장된 프리셋",
+        presetsLoad: "불러오기",
+        presetsDelete: "삭제",
+        presetsNone: "저장된 프리셋이 없습니다.",
+        presetsInvalidName: "프리셋 이름을 입력하세요.",
       },
     };
 
     return dict[lang];
   }, [lang]);
+
+  const persistPresets = (next: RunConfigPreset[]) => {
+    setPresets(next);
+    saveRunConfigPresets(next);
+  };
+
+  const handleSavePreset = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPresetMessage(null);
+
+    const name = presetName.trim();
+    if (!name) {
+      setPresetMessage(t.presetsInvalidName);
+      return;
+    }
+
+    const snapshot: RunConfigPreset["config"] = {
+      domain,
+      loginEnabled,
+      loginUser,
+      loginPassword:
+        presetIncludePassword && loginEnabled && loginPassword ? loginPassword : undefined,
+      loginPath,
+      logoutPath,
+      verifySsl,
+      disableWarnings,
+      sitemapScopeEnabled,
+      sitemapScopeAutoAllowSubdomains,
+      sitemapScopes,
+      sitemapDenylistEnabled,
+      sitemapPresetEnabled,
+      sitemapRememberCustom,
+      sitemapCustomDenylist,
+    };
+
+    const next: RunConfigPreset = {
+      id: generatePresetId(),
+      name,
+      createdAt: new Date().toISOString(),
+      config: snapshot,
+    };
+
+    persistPresets([next, ...presets].slice(0, 30));
+    setPresetName("");
+    setPresetMessage(t.presetsSaved);
+  };
+
+  const handleLoadPreset = (preset: RunConfigPreset) => {
+    const c = preset.config;
+
+    setDomain(c.domain);
+    setLoginEnabled(c.loginEnabled);
+    setLoginUser(c.loginUser);
+    setLoginPassword(c.loginPassword || "");
+    setLoginPath(c.loginPath);
+    setLogoutPath(c.logoutPath);
+    setVerifySsl(c.verifySsl);
+    setDisableWarnings(c.disableWarnings);
+
+    setSitemapScopeEnabled(c.sitemapScopeEnabled);
+    setSitemapScopeAutoAllowSubdomains(c.sitemapScopeAutoAllowSubdomains);
+    setSitemapScopes(c.sitemapScopes);
+    setSitemapScopeDraftValue("");
+
+    setSitemapDenylistEnabled(c.sitemapDenylistEnabled);
+    setSitemapPresetEnabled(c.sitemapPresetEnabled);
+    setSitemapRememberCustom(c.sitemapRememberCustom);
+    setSitemapCustomDenylist(c.sitemapCustomDenylist);
+
+    setPresetMessage(t.presetsLoaded);
+  };
+
+  const handleDeletePreset = (id: string) => {
+    const next = presets.filter((preset) => preset.id !== id);
+    persistPresets(next);
+    setPresetMessage(t.presetsDeleted);
+  };
 
   const statusLabel = useMemo(() => {
     switch (status) {
@@ -344,6 +633,9 @@ export default function Home() {
           logoutPath,
           verifySsl,
           disableWarnings,
+          sitemapDenylist,
+          sitemapScopeExact: sitemapScopeParams.scopeExact,
+          sitemapScopeDomains: sitemapScopeParams.scopeDomains,
         }),
       });
 
@@ -537,6 +829,297 @@ export default function Home() {
               </label>
             </div>
 
+            <details open={false}>
+              <summary>
+                {lang === "ko"
+                  ? "탐색 범위/제외 설정(scope/denylist)"
+                  : "Crawl scope / denylist"}
+              </summary>
+              <div style={{ marginTop: 12 }}>
+                <h4 className="muted" style={{ margin: "0 0 10px" }}>
+                  {lang === "ko" ? "탐색 범위(scope)" : "Scope"}
+                </h4>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={sitemapScopeEnabled}
+                    onChange={(e) => setSitemapScopeEnabled(e.target.checked)}
+                  />
+                  {lang === "ko"
+                    ? "등록된 범위(scope) 내에서만 링크 탐색"
+                    : "Only crawl URLs inside the allowed scope"}
+                </label>
+
+                <label className="toggle" style={{ marginTop: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={sitemapScopeAutoAllowSubdomains}
+                    disabled={!sitemapScopeEnabled}
+                    onChange={(e) => setSitemapScopeAutoAllowSubdomains(e.target.checked)}
+                  />
+                  {lang === "ko"
+                    ? "기본 대상에 대해 서브도메인 허용"
+                    : "Allow subdomains for the default target"}
+                </label>
+
+                <p className="muted" style={{ margin: "10px 0 0" }}>
+                  {lang === "ko"
+                    ? `적용 범위: exact ${sitemapScopeParams.scopeExact.length} / subdomains ${
+                        sitemapScopeParams.scopeDomains.length
+                      }`
+                    : `Effective scope: exact ${sitemapScopeParams.scopeExact.length} / subdomains ${
+                        sitemapScopeParams.scopeDomains.length
+                      }`}
+                </p>
+
+                <div style={{ marginTop: 12 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <input
+                      value={sitemapScopeDraftValue}
+                      onChange={(e) => setSitemapScopeDraftValue(e.target.value)}
+                      placeholder={lang === "ko" ? "예: example.com" : "e.g. example.com"}
+                      disabled={!sitemapScopeEnabled}
+                      style={{ flex: "1 1 260px" }}
+                    />
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={sitemapScopeDraftAllowSubdomains}
+                        disabled={!sitemapScopeEnabled}
+                        onChange={(e) => setSitemapScopeDraftAllowSubdomains(e.target.checked)}
+                      />
+                      {lang === "ko" ? "서브도메인 허용" : "Allow subdomains"}
+                    </label>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!sitemapScopeEnabled}
+                      onClick={() => {
+                        const host = hostnameFromUrlish(sitemapScopeDraftValue);
+                        if (!host) {
+                          window.alert(
+                            lang === "ko"
+                              ? "유효한 도메인/URL을 입력하세요."
+                              : "Enter a valid domain/URL."
+                          );
+                          return;
+                        }
+
+                        const entry: SitemapScopeEntry = {
+                          id: generateScopeId(),
+                          value: host,
+                          allowSubdomains: sitemapScopeDraftAllowSubdomains,
+                          enabled: true,
+                        };
+                        setSitemapScopes((prev) => [entry, ...prev]);
+                        setSitemapScopeDraftValue("");
+                      }}
+                      style={{ padding: "10px 14px" }}
+                    >
+                      {lang === "ko" ? "추가" : "Add"}
+                    </button>
+                  </div>
+
+                  {sitemapScopes.length ? (
+                    <div className="panel-stack" style={{ gap: 10, marginTop: 12 }}>
+                      {sitemapScopes.map((entry) => (
+                        <div
+                          key={entry.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            flexWrap: "wrap",
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            border: "1px solid var(--border)",
+                            background: "var(--panel)",
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800 }}>{entry.value}</div>
+                            <div className="muted" style={{ fontSize: "0.85rem" }}>
+                              {entry.allowSubdomains
+                                ? lang === "ko"
+                                  ? "서브도메인 포함"
+                                  : "includes subdomains"
+                                : lang === "ko"
+                                  ? "정확히 이 호스트만"
+                                  : "exact host only"}
+                            </div>
+                          </div>
+                          <div className="inline" style={{ flexWrap: "wrap" }}>
+                            <label className="toggle">
+                              <input
+                                type="checkbox"
+                                checked={entry.enabled}
+                                disabled={!sitemapScopeEnabled}
+                                onChange={(e) =>
+                                  setSitemapScopes((prev) =>
+                                    prev.map((item) =>
+                                      item.id === entry.id
+                                        ? { ...item, enabled: e.target.checked }
+                                        : item
+                                    )
+                                  )
+                                }
+                              />
+                              {lang === "ko" ? "사용" : "Enabled"}
+                            </label>
+                            <label className="toggle">
+                              <input
+                                type="checkbox"
+                                checked={entry.allowSubdomains}
+                                disabled={!sitemapScopeEnabled}
+                                onChange={(e) =>
+                                  setSitemapScopes((prev) =>
+                                    prev.map((item) =>
+                                      item.id === entry.id
+                                        ? { ...item, allowSubdomains: e.target.checked }
+                                        : item
+                                    )
+                                  )
+                                }
+                              />
+                              {lang === "ko" ? "서브도메인" : "Subdomains"}
+                            </label>
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() =>
+                                setSitemapScopes((prev) =>
+                                  prev.filter((item) => item.id !== entry.id)
+                                )
+                              }
+                              style={{
+                                padding: "10px 14px",
+                                background: "transparent",
+                                color: "var(--ink)",
+                                border: "1px solid var(--border)",
+                              }}
+                            >
+                              {lang === "ko" ? "삭제" : "Remove"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted" style={{ margin: "10px 0 0" }}>
+                      {lang === "ko"
+                        ? "등록된 scope가 없으면 대상(host)이 자동으로 적용됩니다."
+                        : "If no custom scopes are added, the target host is used automatically."}
+                    </p>
+                  )}
+                </div>
+
+                <h4 className="muted" style={{ margin: "18px 0 10px" }}>
+                  {lang === "ko" ? "도메인 제외(denylist)" : "Denylist"}
+                </h4>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={sitemapDenylistEnabled}
+                    onChange={(e) => setSitemapDenylistEnabled(e.target.checked)}
+                  />
+                  {lang === "ko"
+                    ? "특정 도메인(호스트)을 사이트맵 탐색에서 제외"
+                    : "Exclude domains (hostname substring match) during sitemap crawl"}
+                </label>
+
+                <p className="muted" style={{ margin: "10px 0 0" }}>
+                  {lang === "ko"
+                    ? `활성 패턴: ${sitemapDenylist.length}`
+                    : `Active patterns: ${sitemapDenylist.length}`}
+                </p>
+
+                {SITEMAP_DENYLIST_PRESETS.map((group) => (
+                  <div key={`run-deny-${group.id}`} style={{ marginTop: 14 }}>
+                    <h4 className="muted" style={{ margin: "0 0 10px" }}>
+                      {lang === "ko" ? group.titleKo : group.titleEn}
+                    </h4>
+                    <div className="panel-stack" style={{ gap: 10 }}>
+                      {group.items.map((item) => (
+                        <label key={`run-deny-item-${item.id}`} className="toggle">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(sitemapPresetEnabled[item.id])}
+                            disabled={!sitemapDenylistEnabled}
+                            onChange={(e) =>
+                              setSitemapPresetEnabled((prev) => ({
+                                ...prev,
+                                [item.id]: e.target.checked,
+                              }))
+                            }
+                          />
+                          {lang === "ko" ? item.labelKo : item.labelEn}
+                          <span className="muted">({item.patterns.join(", ")})</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                <div style={{ marginTop: 14 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div className="muted" style={{ fontSize: "0.95rem" }}>
+                      {lang === "ko" ? "사용자 정의 패턴" : "Custom patterns"}
+                    </div>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={sitemapRememberCustom}
+                        disabled={!sitemapDenylistEnabled}
+                        onChange={(e) => setSitemapRememberCustom(e.target.checked)}
+                      />
+                      {lang === "ko" ? "기억하기" : "Remember"}
+                      <span className="muted">
+                        {lang === "ko" ? "(새로고침 후에도 유지)" : "(persist across refresh)"}
+                      </span>
+                    </label>
+                  </div>
+
+                  <div style={{ marginTop: 10 }}>
+                    <AutoSizeTextarea
+                      value={sitemapCustomDenylist}
+                      aria-label={lang === "ko" ? "사용자 정의 패턴" : "Custom patterns"}
+                      onChange={(e) => setSitemapCustomDenylist(e.target.value)}
+                      placeholder={
+                        lang === "ko"
+                          ? "예: facebook.com\nhttps://example.com/\n=exact.example.com\nblog\n(쉼표/줄바꿈으로 구분)"
+                          : "e.g. facebook.com\nhttps://example.com/\n=exact.example.com\nblog\n(separated by commas/newlines)"
+                      }
+                      disabled={!sitemapDenylistEnabled}
+                      style={{ minHeight: 96 }}
+                    />
+                  </div>
+                  <p className="muted" style={{ margin: "10px 0 0" }}>
+                    {lang === "ko" ? (
+                      "example.com 은 example.com 및 서브도메인 전체를 제외합니다. https://example.com/ 또는 =example.com 은 example.com만 제외(서브도메인 허용)합니다."
+                    ) : (
+                      "example.com blocks example.com and its subdomains. https://example.com/ or =example.com blocks only example.com (subdomains allowed)."
+                    )}
+                  </p>
+                </div>
+              </div>
+            </details>
+
             <div className="inline">
               <button className="btn" type="submit" disabled={status === "running"}>
                 {status === "running" ? t.runningButton : t.runButton}
@@ -544,6 +1127,102 @@ export default function Home() {
               <span className={statusTagClass}>{statusLabel}</span>
             </div>
           </form>
+
+          <details open={false} style={{ marginTop: 18 }}>
+            <summary>{t.presetsTitle}</summary>
+            <div style={{ marginTop: 12 }}>
+              <div className="panel-stack" style={{ gap: 14 }}>
+                <div>
+                  <h3 className="muted" style={{ margin: "0 0 10px" }}>
+                    {t.presetsSaveTitle}
+                  </h3>
+                  <form onSubmit={handleSavePreset}>
+                    <label>
+                      {t.presetsNameLabel}
+                      <input
+                        value={presetName}
+                        onChange={(e) => setPresetName(e.target.value)}
+                        placeholder={lang === "ko" ? "예: 스테이징-기본" : "e.g. staging-default"}
+                      />
+                    </label>
+
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={presetIncludePassword}
+                        onChange={(e) => setPresetIncludePassword(e.target.checked)}
+                        disabled={!loginEnabled}
+                      />
+                      {t.presetsIncludePassword}
+                    </label>
+
+                    <div className="inline">
+                      <button className="btn" type="submit">
+                        {t.presetsSave}
+                      </button>
+                      {presetMessage ? <span className="tag">{presetMessage}</span> : null}
+                    </div>
+                  </form>
+                </div>
+
+                <div>
+                  <h3 className="muted" style={{ margin: "0 0 10px" }}>
+                    {t.presetsListTitle}
+                  </h3>
+                  {presets.length ? (
+                    <div className="panel-stack" style={{ gap: 10 }}>
+                      {presets.map((preset) => (
+                        <div
+                          key={preset.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            flexWrap: "wrap",
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            border: "1px solid var(--border)",
+                            background: "var(--panel)",
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800 }}>{preset.name}</div>
+                            <div className="muted" style={{ fontSize: "0.85rem" }}>
+                              {(preset.config.domain || "-").slice(0, 80)}
+                            </div>
+                          </div>
+                          <div className="inline" style={{ flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() => handleLoadPreset(preset)}
+                            >
+                              {t.presetsLoad}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() => handleDeletePreset(preset.id)}
+                              style={{
+                                background: "transparent",
+                                color: "var(--ink)",
+                                border: "1px solid var(--border)",
+                              }}
+                            >
+                              {t.presetsDelete}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">{t.presetsNone}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div className="card panel-stack">

@@ -195,9 +195,57 @@ textarea {
   color: var(--muted-ink);
 }
 
+.result-list li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .panel-stack {
   display: grid;
   gap: 20px;
+}
+
+details {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 12px 14px;
+}
+
+details > summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: var(--ink);
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  overflow-wrap: anywhere;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary::before {
+  content: "▸";
+  color: var(--muted-ink);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+details[open] > summary::before {
+  content: "▾";
+}
+
+details > :not(summary) {
+  margin-left: 14px;
+  padding-left: 14px;
+  border-left: 2px solid rgba(17, 24, 39, 0.12);
+}
+
+html[data-theme="dark"] details > :not(summary) {
+  border-left-color: rgba(226, 232, 240, 0.16);
 }
 
 .nav-card {
