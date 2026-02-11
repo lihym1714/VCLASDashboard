@@ -78,3 +78,53 @@ export const readText = async (filePath: string) => {
   }
   return fs.readFile(filePath, "utf-8");
 };
+
+const DENYLIST_PATTERN_RE = /^=?[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+export const normalizeDenylist = (value: unknown) => {
+  if (!Array.isArray(value)) return [] as string[];
+
+  const normalized = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((item) => item.length <= 64)
+    .filter((item) => DENYLIST_PATTERN_RE.test(item));
+
+  return Array.from(new Set(normalized)).slice(0, 64);
+};
+
+const HOST_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]*$/;
+
+const extractHostname = (raw: string): string | null => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const url =
+      trimmed.toLowerCase().startsWith("http://") ||
+      trimmed.toLowerCase().startsWith("https://")
+        ? new URL(trimmed)
+        : new URL(`https://${trimmed}`);
+    return url.hostname.toLowerCase();
+  } catch {
+    const candidate = trimmed.split(/[/?#]/)[0] || trimmed;
+    const host = candidate.split(":")[0] || candidate;
+    return host ? host.toLowerCase() : null;
+  }
+};
+
+export const normalizeHostList = (value: unknown) => {
+  if (!Array.isArray(value)) return [] as string[];
+
+  const normalized = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => extractHostname(item))
+    .filter((item): item is string => Boolean(item))
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((item) => item.length <= 253)
+    .filter((item) => HOST_RE.test(item));
+
+  return Array.from(new Set(normalized)).slice(0, 64);
+};

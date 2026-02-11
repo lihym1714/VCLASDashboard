@@ -11,13 +11,24 @@ import {
 } from "../../_shared/history";
 import { getUserIdFromRequest } from "../../_shared/user";
 
-import { isValidTarget, pythonBin, readText, runCommand, vulnRoot } from "../_shared";
+import {
+  isValidTarget,
+  normalizeDenylist,
+  normalizeHostList,
+  pythonBin,
+  readText,
+  runCommand,
+  vulnRoot,
+} from "../_shared";
 
 export const runtime = "nodejs";
 
 type Body = {
   startUrl: string;
   maxDepth?: number;
+  denylist?: string[];
+  scopeExact?: string[];
+  scopeDomains?: string[];
 };
 
 export async function POST(request: Request) {
@@ -48,6 +59,9 @@ export async function POST(request: Request) {
 
     const depth = Number.isFinite(body.maxDepth) ? Number(body.maxDepth) : 2;
     const maxDepth = Math.max(0, Math.min(20, depth));
+    const denylist = normalizeDenylist(body.denylist);
+    const scopeExact = normalizeHostList(body.scopeExact);
+    const scopeDomains = normalizeHostList(body.scopeDomains);
 
     const dataDir = path.join(vulnRoot, "data");
     await fs.mkdir(dataDir, { recursive: true });
@@ -62,12 +76,19 @@ export async function POST(request: Request) {
 
     await fs.rm(sitemapPath, { force: true });
 
-    const cmd = await runCommand(
-      pythonBin,
-      ["information_scrp/sitemap_builder.py", startUrl, String(maxDepth)],
-      vulnRoot,
-      20 * 60 * 1000
-    );
+    const args = ["information_scrp/sitemap_builder.py", startUrl, String(maxDepth)];
+    for (const pattern of denylist) {
+      args.push("--deny", pattern);
+    }
+
+    for (const host of scopeExact) {
+      args.push("--scope", host);
+    }
+    for (const domain of scopeDomains) {
+      args.push("--scope-subdomains", domain);
+    }
+
+    const cmd = await runCommand(pythonBin, args, vulnRoot, 20 * 60 * 1000);
 
     const sitemapTree = await readText(sitemapPath);
     const log = cmd.output || "";

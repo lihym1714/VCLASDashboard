@@ -13,6 +13,8 @@ import { getUserIdFromRequest } from "../../_shared/user";
 
 import {
   isValidTarget,
+  normalizeDenylist,
+  normalizeHostList,
   normalizePath,
   pythonBin,
   readLines,
@@ -34,6 +36,9 @@ type RunRequest = {
   logoutPath?: string;
   verifySsl?: VerifySslMode;
   disableWarnings?: boolean;
+  sitemapDenylist?: string[];
+  sitemapScopeExact?: string[];
+  sitemapScopeDomains?: string[];
 };
 
 type CommandResult = {
@@ -125,7 +130,11 @@ const stripWww = (hostname: string) => {
 };
 
 const isAllowedHost = (base: URL, candidate: URL) => {
-  return stripWww(base.hostname) === stripWww(candidate.hostname);
+  const baseHost = stripWww(base.hostname);
+  const candidateHost = stripWww(candidate.hostname);
+  if (candidateHost === baseHost) return true;
+  if (!baseHost.includes(".")) return false;
+  return candidateHost.endsWith(`.${baseHost}`);
 };
 
 const ASSET_EXT_RE =
@@ -221,6 +230,9 @@ export async function POST(request: Request) {
     ]);
 
     const { host: targetHost, startUrl } = deriveTargets(domain);
+    const sitemapDenylist = normalizeDenylist(body.sitemapDenylist);
+    const sitemapScopeExact = normalizeHostList(body.sitemapScopeExact);
+    const sitemapScopeDomains = normalizeHostList(body.sitemapScopeDomains);
 
     let log = "";
 
@@ -233,12 +245,19 @@ export async function POST(request: Request) {
 
     log += `[*] Subdomain scan\n${subdomainResult.output}\n`;
 
-    const sitemapResult = await runCommand(
-      pythonBin,
-      ["information_scrp/sitemap_builder.py", startUrl, "2"],
-      vulnRoot,
-      20 * 60 * 1000
-    );
+    const sitemapArgs = ["information_scrp/sitemap_builder.py", startUrl, "2"];
+    for (const pattern of sitemapDenylist) {
+      sitemapArgs.push("--deny", pattern);
+    }
+
+    for (const host of sitemapScopeExact) {
+      sitemapArgs.push("--scope", host);
+    }
+    for (const domainPattern of sitemapScopeDomains) {
+      sitemapArgs.push("--scope-subdomains", domainPattern);
+    }
+
+    const sitemapResult = await runCommand(pythonBin, sitemapArgs, vulnRoot, 20 * 60 * 1000);
 
     log += `\n[*] Sitemap builder\n${sitemapResult.output}\n`;
 
